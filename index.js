@@ -14,8 +14,27 @@ const sseManager = require("./services/sseManager");
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// Configure CORS
-app.use(cors({ origin: '*' }));
+
+
+
+// ✅ Allow both localhost and Netlify frontend
+const allowedOrigins = [
+  'http://localhost:5173',
+  'https://extraordinary-dieffenbachia-757a4c.netlify.app'
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  }
+}));
+
+// your routes...
+
 
 
 app.use(express.static('dist'));
