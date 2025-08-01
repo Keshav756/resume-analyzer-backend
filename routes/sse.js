@@ -5,12 +5,36 @@ const eventBroadcaster = require('../services/eventBroadcaster');
 
 const router = express.Router();
 
+// Allowed frontend origins
+const allowedOrigins = [
+  'http://localhost:5173',
+  'https://extraordinary-dieffenbachia-757a4c.netlify.app'
+];
+
 /**
  * GET /api/events/:sessionId
  * Establish SSE connection for real-time updates
  */
 router.get('/events/:sessionId', (req, res) => {
   const { sessionId } = req.params;
+  const origin = req.headers.origin;
+
+  // Handle CORS for SSE requests manually
+  if (allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else {
+    return res.status(403).json({
+      error: 'CORS Error: Origin not allowed',
+      code: 'CORS_NOT_ALLOWED'
+    });
+  }
+
+  // SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.flushHeaders();
 
   // Validate session ID
   if (!sessionId || typeof sessionId !== 'string') {
@@ -31,7 +55,7 @@ router.get('/events/:sessionId', (req, res) => {
 
   // Create SSE connection
   const connectionCreated = sseManager.createConnection(sessionId, res);
-  
+
   if (!connectionCreated) {
     return res.status(500).json({
       error: 'Failed to create SSE connection',
@@ -41,7 +65,6 @@ router.get('/events/:sessionId', (req, res) => {
 
   // Send current session status and any existing results
   if (session.status === 'completed' && session.feedback) {
-    // Session already completed - send the results immediately
     sseManager.broadcastToSession(sessionId, 'analysis.completed', {
       status: 'completed',
       message: 'Analysis completed successfully',
@@ -50,7 +73,6 @@ router.get('/events/:sessionId', (req, res) => {
       completedAt: session.completedAt || new Date().toISOString()
     });
   } else {
-    // Send current status
     sseManager.broadcastToSession(sessionId, 'session.status', {
       status: session.status,
       message: `Current status: ${session.status}`,
@@ -63,10 +85,16 @@ router.get('/events/:sessionId', (req, res) => {
     });
   }
 
-  // Extend session expiration since user is actively connected
+  // Extend session expiration
   sessionManager.extendSession(sessionId);
 
   console.log(`SSE connection established for session: ${sessionId}`);
+
+  // Cleanup on client disconnect
+  req.on('close', () => {
+    console.log(`SSE connection closed for session: ${sessionId}`);
+    sseManager.removeClient(sessionId, res);
+  });
 });
 
 /**
@@ -76,7 +104,6 @@ router.get('/events/:sessionId', (req, res) => {
 router.get('/events/:sessionId/status', (req, res) => {
   const { sessionId } = req.params;
 
-  // Validate session ID
   if (!sessionId || typeof sessionId !== 'string') {
     return res.status(400).json({
       error: 'Invalid session ID',
@@ -84,7 +111,6 @@ router.get('/events/:sessionId/status', (req, res) => {
     });
   }
 
-  // Get session
   const session = sessionManager.getSession(sessionId);
   if (!session) {
     return res.status(404).json({
@@ -93,7 +119,6 @@ router.get('/events/:sessionId/status', (req, res) => {
     });
   }
 
-  // Return session status
   res.json({
     success: true,
     sessionId: session.sessionId,
@@ -112,7 +137,6 @@ router.get('/events/:sessionId/status', (req, res) => {
 router.post('/events/:sessionId/retry', (req, res) => {
   const { sessionId } = req.params;
 
-  // Validate session ID
   if (!sessionId || typeof sessionId !== 'string') {
     return res.status(400).json({
       error: 'Invalid session ID',
@@ -120,7 +144,6 @@ router.post('/events/:sessionId/retry', (req, res) => {
     });
   }
 
-  // Get session
   const session = sessionManager.getSession(sessionId);
   if (!session) {
     return res.status(404).json({
@@ -129,7 +152,6 @@ router.post('/events/:sessionId/retry', (req, res) => {
     });
   }
 
-  // Check if session is in error state
   if (session.status !== 'error') {
     return res.status(400).json({
       error: 'Session is not in error state',
@@ -137,10 +159,8 @@ router.post('/events/:sessionId/retry', (req, res) => {
     });
   }
 
-  // Increment retry count
   const newRetryCount = (session.retryCount || 0) + 1;
-  
-  // Check retry limit
+
   if (newRetryCount > 3) {
     return res.status(400).json({
       error: 'Maximum retry attempts exceeded',
@@ -148,14 +168,12 @@ router.post('/events/:sessionId/retry', (req, res) => {
     });
   }
 
-  // Update session for retry
   sessionManager.updateSession(sessionId, {
     status: 'retrying',
     retryCount: newRetryCount,
     lastError: null
   });
 
-  // Broadcast retry started
   eventBroadcaster.broadcastRetryStarted(sessionId, newRetryCount);
 
   res.json({
@@ -175,7 +193,6 @@ router.post('/events/:sessionId/retry', (req, res) => {
 router.delete('/events/:sessionId', (req, res) => {
   const { sessionId } = req.params;
 
-  // Validate session ID
   if (!sessionId || typeof sessionId !== 'string') {
     return res.status(400).json({
       error: 'Invalid session ID',
@@ -183,7 +200,6 @@ router.delete('/events/:sessionId', (req, res) => {
     });
   }
 
-  // Close connections
   sseManager.closeSessionConnections(sessionId);
 
   res.json({
