@@ -15,10 +15,8 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 
 // Configure CORS
-app.use(
-  cors()
-  
-);
+app.use(cors({ origin: '*' }));
+
 
 app.use(express.static('dist'));
 // Configure JSON parsing middleware
