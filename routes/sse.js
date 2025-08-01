@@ -19,9 +19,10 @@ router.get('/events/:sessionId', (req, res) => {
   const { sessionId } = req.params;
   const origin = req.headers.origin;
 
-  // Handle CORS for SSE requests manually
+  // ✅ CORS Handling for SSE
   if (allowedOrigins.includes(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
   } else {
     return res.status(403).json({
       error: 'CORS Error: Origin not allowed',
@@ -29,41 +30,38 @@ router.get('/events/:sessionId', (req, res) => {
     });
   }
 
-  // SSE headers
+  // ✅ Proper SSE Headers
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
+
+  // ✅ Important: flush the headers
   res.flushHeaders();
 
-  // Validate session ID
+  // ✅ Validate session ID
   if (!sessionId || typeof sessionId !== 'string') {
-    return res.status(400).json({
-      error: 'Invalid session ID',
-      code: 'INVALID_SESSION_ID'
-    });
+    res.write(`event: error\ndata: ${JSON.stringify({ error: 'Invalid session ID' })}\n\n`);
+    res.end();
+    return;
   }
 
-  // Check if session exists - if completed, allow connection to show results
+  // ✅ Check session existence
   const session = sessionManager.getSession(sessionId);
   if (!session) {
-    return res.status(404).json({
-      error: 'Session not found',
-      code: 'SESSION_NOT_FOUND'
-    });
+    res.write(`event: error\ndata: ${JSON.stringify({ error: 'Session not found' })}\n\n`);
+    res.end();
+    return;
   }
 
-  // Create SSE connection
-  const connectionCreated = sseManager.createConnection(sessionId, res);
-
-  if (!connectionCreated) {
-    return res.status(500).json({
-      error: 'Failed to create SSE connection',
-      code: 'SSE_CONNECTION_FAILED'
-    });
+  // ✅ Register the SSE connection
+  const connected = sseManager.createConnection(sessionId, res);
+  if (!connected) {
+    res.write(`event: error\ndata: ${JSON.stringify({ error: 'SSE connection failed' })}\n\n`);
+    res.end();
+    return;
   }
 
-  // Send current session status and any existing results
+  // ✅ Broadcast current session status or completed results
   if (session.status === 'completed' && session.feedback) {
     sseManager.broadcastToSession(sessionId, 'analysis.completed', {
       status: 'completed',
@@ -85,21 +83,21 @@ router.get('/events/:sessionId', (req, res) => {
     });
   }
 
-  // Extend session expiration
+  // Extend session timeout since user is listening
   sessionManager.extendSession(sessionId);
 
-  console.log(`SSE connection established for session: ${sessionId}`);
+  console.log(`✅ SSE connection established for session: ${sessionId}`);
 
-  // Cleanup on client disconnect
+  // Handle client disconnect
   req.on('close', () => {
-    console.log(`SSE connection closed for session: ${sessionId}`);
+    console.log(`❌ SSE connection closed for session: ${sessionId}`);
     sseManager.removeClient(sessionId, res);
   });
 });
 
 /**
  * GET /api/events/:sessionId/status
- * Get current session status (non-SSE endpoint)
+ * Get current session status (non-SSE)
  */
 router.get('/events/:sessionId/status', (req, res) => {
   const { sessionId } = req.params;
@@ -132,7 +130,6 @@ router.get('/events/:sessionId/status', (req, res) => {
 
 /**
  * POST /api/events/:sessionId/retry
- * Trigger retry for failed session
  */
 router.post('/events/:sessionId/retry', (req, res) => {
   const { sessionId } = req.params;
@@ -160,7 +157,6 @@ router.post('/events/:sessionId/retry', (req, res) => {
   }
 
   const newRetryCount = (session.retryCount || 0) + 1;
-
   if (newRetryCount > 3) {
     return res.status(400).json({
       error: 'Maximum retry attempts exceeded',
@@ -179,16 +175,15 @@ router.post('/events/:sessionId/retry', (req, res) => {
   res.json({
     success: true,
     message: 'Retry initiated',
-    sessionId: sessionId,
+    sessionId,
     retryCount: newRetryCount
   });
 
-  console.log(`Retry initiated for session ${sessionId}, attempt ${newRetryCount}`);
+  console.log(`🔁 Retry initiated for session ${sessionId}, attempt ${newRetryCount}`);
 });
 
 /**
  * DELETE /api/events/:sessionId
- * Close SSE connections for a session
  */
 router.delete('/events/:sessionId', (req, res) => {
   const { sessionId } = req.params;
@@ -205,15 +200,14 @@ router.delete('/events/:sessionId', (req, res) => {
   res.json({
     success: true,
     message: 'SSE connections closed',
-    sessionId: sessionId
+    sessionId
   });
 
-  console.log(`SSE connections closed for session: ${sessionId}`);
+  console.log(`❌ SSE connections closed for session: ${sessionId}`);
 });
 
 /**
  * GET /api/sse/stats
- * Get SSE connection statistics
  */
 router.get('/sse/stats', (req, res) => {
   try {
@@ -225,7 +219,7 @@ router.get('/sse/stats', (req, res) => {
 
     res.json({
       success: true,
-      stats: stats,
+      stats,
       timestamp: new Date().toISOString()
     });
   } catch (error) {
